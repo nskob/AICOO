@@ -1,0 +1,10 @@
+python-telegram-bot[job-queue]>=20.7
+httpx>=0.26.0
+sqlalchemy[asyncio]>=2.0.25
+asyncpg>=0.29.0
+alembic>=1.13.1
+pydantic>=2.5.3
+pydantic-settings>=2.1.0
+apscheduler>=3.10.4
+anthropic>=0.18.0
+python-dotenv>=1.0.0

@@ -1,0 +1,34 @@
+[Unit]
+Description=OZON Business Intelligence Bot
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=ozon
+Group=ozon
+WorkingDirectory=/home/ozon/AICOO
+Environment="PATH=/home/ozon/AICOO/venv/bin"
+EnvironmentFile=/home/ozon/AICOO/.env
+ExecStart=/home/ozon/AICOO/venv/bin/python -m src.main
+
+# Restart policy
+Restart=always
+RestartSec=10
+StartLimitInterval=5min
+StartLimitBurst=3
+
+# Security
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/home/ozon/AICOO
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ozon-bi
+
+[Install]
+WantedBy=multi-user.target
