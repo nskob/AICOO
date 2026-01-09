@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     ozon_client_id: str
     ozon_api_key: str
 
+    # OZON Performance API (advertising)
+    ozon_performance_client_id: str | None = None
+    ozon_performance_api_key: str | None = None
+
     # Claude API
     anthropic_api_key: str
 

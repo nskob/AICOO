@@ -97,7 +97,7 @@ class OzonDataSync:
 
                 # Create inventory record for each warehouse
                 for stock in item.stocks:
-                    warehouse_name = stock.warehouse_name or "Default"
+                    warehouse_name = stock.warehouse_name or stock.type or "Default"
                     await self.inventory_repo.upsert(
                         product_id=item.product_id,
                         warehouse_name=warehouse_name,
@@ -131,6 +131,21 @@ class OzonDataSync:
             end_date = date.today() - timedelta(days=1)  # Yesterday
             start_date = end_date - timedelta(days=days_back - 1)
 
+            # Build FBO SKU -> product_id mapping from product info
+            # Analytics API returns FBO SKU, not product_id or offer_id
+            fbo_sku_map = {}
+            product_list = await self.ozon.get_product_list()
+            if product_list:
+                product_ids = [p.product_id for p in product_list]
+                products_info = await self.ozon.get_product_info(product_ids)
+                for p in products_info:
+                    if p.stocks and isinstance(p.stocks, dict):
+                        stocks_list = p.stocks.get("stocks", [])
+                        for stock in stocks_list:
+                            if isinstance(stock, dict) and "sku" in stock:
+                                fbo_sku_map[str(stock["sku"])] = p.product_id
+                logger.info(f"Built FBO SKU mapping: {len(fbo_sku_map)} entries")
+
             # Get analytics data
             analytics = await self.ozon.get_analytics_data(
                 date_from=start_date,
@@ -146,25 +161,35 @@ class OzonDataSync:
                 dimensions = row.get("dimensions", [])
                 metrics = row.get("metrics", [])
 
-                if not dimensions or not metrics:
+                if not dimensions or not metrics or len(dimensions) < 2:
                     continue
 
-                # Extract dimensions
-                sku = None
+                # Extract dimensions - format is:
+                # [{'id': 'sku_value', 'name': 'product_name'}, {'id': 'date', 'name': ''}]
+                sku = dimensions[0].get("id")
+                date_str = dimensions[1].get("id")
+
                 sale_date = None
-                for dim in dimensions:
-                    if dim.get("id") == "sku":
-                        sku = dim.get("value")
-                    elif dim.get("id") == "day":
-                        sale_date = date.fromisoformat(dim.get("value"))
+                if date_str:
+                    try:
+                        sale_date = date.fromisoformat(date_str)
+                    except ValueError:
+                        logger.warning(f"Invalid date format: {date_str}")
+                        continue
 
                 if not sku or not sale_date:
                     continue
 
-                # Get product by offer_id (sku)
-                product = await self.products_repo.get_by_offer_id(sku)
+                # Look up product_id using FBO SKU mapping
+                product_id = fbo_sku_map.get(sku)
+                if not product_id:
+                    logger.warning(f"Product not found for FBO SKU: {sku}")
+                    continue
+
+                # Verify product exists in database
+                product = await self.products_repo.get_by_product_id(product_id)
                 if not product:
-                    logger.warning(f"Product not found for SKU: {sku}")
+                    logger.warning(f"Product {product_id} not in database for FBO SKU: {sku}")
                     continue
 
                 # Extract metrics

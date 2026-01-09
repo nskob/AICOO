@@ -29,18 +29,22 @@ class OzonStock(BaseModel):
     present: int
     reserved: int
     warehouse_name: Optional[str] = None
+    type: Optional[str] = None  # v4 API uses type (fbo/fbs) instead of warehouse_name
 
 
 class OzonProductFull(BaseModel):
     """Detailed product information."""
 
-    product_id: int
+    product_id: int = Field(alias="id")
     offer_id: str
     name: str
     price: str
     old_price: str = "0"
     currency_code: str = "RUB"
-    stocks: Optional[list[OzonStock]] = None
+    stocks: Optional[Any] = None  # v3 API returns nested structure
+
+    class Config:
+        populate_by_name = True
 
 
 class OzonProductListResponse(BaseModel):

@@ -51,7 +51,7 @@ class OzonClient:
 
         Returns minimal product info (product_id, offer_id).
         """
-        url = f"{self.BASE_URL}/v2/product/list"
+        url = f"{self.BASE_URL}/v3/product/list"
         payload = {"filter": {"visibility": "ALL"}, "limit": 1000}
 
         try:
@@ -74,16 +74,18 @@ class OzonClient:
         Returns:
             List of detailed product information
         """
-        url = f"{self.BASE_URL}/v2/product/info/list"
+        url = f"{self.BASE_URL}/v3/product/info/list"
         payload = {"product_id": product_ids}
 
         try:
             response = await self.client.post(url, json=payload, headers=self._get_headers())
             response.raise_for_status()
             data = response.json()
-            result = OzonProductInfoResponse(**data["result"])
-            logger.info(f"Fetched details for {len(result.items)} products")
-            return result.items
+            # v3 API returns items at root level, not under result
+            items_data = data.get("items", data.get("result", {}).get("items", []))
+            items = [OzonProductFull(**item) for item in items_data]
+            logger.info(f"Fetched details for {len(items)} products")
+            return items
         except Exception as e:
             logger.error(f"Failed to fetch product info: {e}")
             raise
@@ -97,18 +99,20 @@ class OzonClient:
         Returns:
             List of stock information by warehouse
         """
-        url = f"{self.BASE_URL}/v1/product/info/stocks"
-        payload = {}
+        url = f"{self.BASE_URL}/v4/product/info/stocks"
+        payload = {"filter": {"visibility": "ALL"}, "limit": 1000}
         if product_ids:
-            payload["product_id"] = product_ids
+            payload["filter"]["product_id"] = product_ids
 
         try:
             response = await self.client.post(url, json=payload, headers=self._get_headers())
             response.raise_for_status()
             data = response.json()
-            result = OzonStocksResponse(**data["result"])
-            logger.info(f"Fetched stocks for {len(result.items)} products")
-            return result.items
+            # v4 returns items at root level
+            items_data = data.get("items", [])
+            items = [OzonStockItem(**item) for item in items_data]
+            logger.info(f"Fetched stocks for {len(items)} products")
+            return items
         except Exception as e:
             logger.error(f"Failed to fetch stocks: {e}")
             raise

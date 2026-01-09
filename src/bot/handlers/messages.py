@@ -97,8 +97,12 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             response = await assistant.ask(user_message, business_context)
             await assistant.close()
 
-            # Send response
-            await update.message.reply_text(response, parse_mode="Markdown")
+            # Send response (with fallback to plain text if markdown fails)
+            try:
+                await update.message.reply_text(response, parse_mode="Markdown")
+            except Exception as parse_error:
+                logger.warning(f"Markdown parse error, sending as plain text: {parse_error}")
+                await update.message.reply_text(response)
 
         except Exception as e:
             logger.error(f"Error in AI message handler: {e}")

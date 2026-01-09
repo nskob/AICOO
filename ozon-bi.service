@@ -5,12 +5,12 @@ Wants=postgresql.service
 
 [Service]
 Type=simple
-User=ozon
-Group=ozon
-WorkingDirectory=/home/ozon/AICOO
-Environment="PATH=/home/ozon/AICOO/venv/bin"
-EnvironmentFile=/home/ozon/AICOO/.env
-ExecStart=/home/ozon/AICOO/venv/bin/python -m src.main
+User=root
+Group=root
+WorkingDirectory=/opt/ozon-bi
+Environment="PATH=/opt/ozon-bi/venv/bin"
+EnvironmentFile=/opt/ozon-bi/.env
+ExecStart=/opt/ozon-bi/venv/bin/python -m src.main
 
 # Restart policy
 Restart=always
@@ -21,9 +21,6 @@ StartLimitBurst=3
 # Security
 NoNewPrivileges=true
 PrivateTmp=true
-ProtectSystem=strict
-ProtectHome=true
-ReadWritePaths=/home/ozon/AICOO
 
 # Logging
 StandardOutput=journal
