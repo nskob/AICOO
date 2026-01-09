@@ -13,6 +13,7 @@ from src.analytics.sales import SalesAnalytics
 from src.bot.keyboards import get_price_recommendation_keyboard
 from src.config import settings
 from src.database.engine import AsyncSessionLocal
+from src.database.repositories.ad_experiments import AdExperimentRepository
 from src.database.repositories.experiments import ExperimentRepository
 from src.database.repositories.price_recommendations import PriceRecommendationRepository
 from src.database.repositories.products import ProductRepository
@@ -310,6 +311,43 @@ async def review_experiments(app: Application) -> None:
             logger.error(f"Experiment review failed: {e}")
 
 
+async def review_ad_experiments(app: Application) -> None:
+    """Review advertising experiments that are due for review."""
+    logger.info("Reviewing ad experiments")
+
+    async with AsyncSessionLocal() as session:
+        try:
+            ad_exp_repo = AdExperimentRepository(session)
+            today = date.today()
+            experiments = await ad_exp_repo.get_experiments_for_review(today)
+
+            if not experiments:
+                logger.info("No ad experiments due for review")
+                return
+
+            for exp in experiments:
+                message = f"""🧪 *Время проверить эксперимент!*
+
+📢 *Кампания:* {truncate_text(exp.campaign_name, 40)}
+🎯 *Действие:* {exp.action}
+📅 *Начало:* {format_date(exp.start_date)}
+⏰ *Длительность:* {exp.duration_days} дней
+
+📊 *Базовые показатели:*
+• Показы: {format_number(exp.baseline_views or 0)}
+• Клики: {format_number(exp.baseline_clicks or 0)}
+• Расход: {format_currency(exp.baseline_spend or Decimal('0'))}
+
+Напиши "проверить эксперимент {exp.id}" чтобы увидеть результаты.
+"""
+                await send_telegram_message(app, message)
+
+            logger.info(f"Sent {len(experiments)} ad experiment review reminders")
+
+        except Exception as e:
+            logger.error(f"Ad experiment review failed: {e}")
+
+
 async def send_stock_alerts(app: Application) -> None:
     """Send evening inventory status alerts."""
     logger.info("Generating stock alerts")
@@ -356,7 +394,8 @@ def setup_scheduler(app: Application) -> AsyncIOScheduler:
     - 06:00: Sync OZON data
     - 09:00: Send daily report
     - 09:30: Run price analysis
-    - 10:00: Review experiments
+    - 10:00: Review price experiments
+    - 10:30: Review ad experiments
     - 18:00: Send stock alerts
     """
     scheduler = AsyncIOScheduler(timezone=settings.timezone)
@@ -399,6 +438,15 @@ def setup_scheduler(app: Application) -> AsyncIOScheduler:
     )
 
     scheduler.add_job(
+        review_ad_experiments,
+        "cron",
+        hour=10,
+        minute=30,
+        kwargs={"app": app},
+        id="review_ad_experiments",
+    )
+
+    scheduler.add_job(
         send_stock_alerts,
         "cron",
         hour=18,
@@ -407,6 +455,6 @@ def setup_scheduler(app: Application) -> AsyncIOScheduler:
         id="send_stock_alerts",
     )
 
-    logger.info("Scheduler configured with 5 jobs")
+    logger.info("Scheduler configured with 6 jobs")
 
     return scheduler

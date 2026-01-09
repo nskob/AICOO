@@ -8,14 +8,16 @@ A comprehensive business intelligence and automated pricing system for OZON mark
 - **📦 Inventory Management** — Stock forecasting, reorder alerts, supply planning
 - **🤖 AI Assistant** — Telegram chatbot powered by Claude that knows all business data
 - **💰 Price Optimization** — Automated price recommendations with A/B experiments
+- **📢 Advertising Management** — Control ad campaigns via Performance API with experiment tracking
 
 ## Technology Stack
 
 - **Python 3.11+** — Core language
 - **PostgreSQL** — Database for analytics
 - **Telegram Bot API** — User interface
-- **Claude API (Anthropic)** — AI assistant
-- **OZON Seller API** — Data source
+- **Claude API (Anthropic)** — AI assistant with tool calling
+- **OZON Seller API** — Products, sales, inventory data
+- **OZON Performance API** — Advertising campaigns management
 - **SQLAlchemy 2.0** — Async ORM
 - **APScheduler** — Task scheduling
 
@@ -84,6 +86,10 @@ TELEGRAM_ADMIN_CHAT_ID=your_chat_id_here
 OZON_CLIENT_ID=your_client_id
 OZON_API_KEY=your_api_key
 
+# OZON Performance API (advertising)
+OZON_PERFORMANCE_CLIENT_ID=your_performance_client_id
+OZON_PERFORMANCE_API_KEY=your_performance_secret
+
 # Claude API
 ANTHROPIC_API_KEY=sk-ant-your_key_here
 
@@ -105,6 +111,13 @@ LOG_LEVEL=INFO
 2. Navigate to Settings → API Keys
 3. Generate new API key
 4. Copy Client-Id and Api-Key
+
+**OZON Performance API (advertising):**
+1. Go to [performance.ozon.ru](https://performance.ozon.ru)
+2. Navigate to Settings → API Access
+3. Create new application (get Client ID)
+4. Generate Client Secret
+5. Uses OAuth2 authentication (handled automatically)
 
 **Claude API:**
 1. Sign up at [console.anthropic.com](https://console.anthropic.com)
@@ -129,18 +142,24 @@ Simply send any question to the bot:
 - "Покажи товары с маржой ниже 15%"
 - "Что нужно заказать у поставщика?"
 - "Есть ли товары без продаж за месяц?"
+- "Покажи рекламные кампании"
+- "Запусти рекламу для крема"
+- "Какие эксперименты сейчас активны?"
+
+The AI can query OZON API directly using tool calling for real-time data.
 
 ### Automated Jobs
 
 The system runs these jobs automatically:
 
-| Time  | Job                  | Description                           |
-|-------|----------------------|---------------------------------------|
-| 06:00 | OZON Data Sync       | Sync products, inventory, sales       |
-| 09:00 | Daily Report         | Morning sales summary                 |
-| 09:30 | Price Analysis       | Generate price recommendations        |
-| 10:00 | Review Experiments   | Check completed A/B tests             |
-| 18:00 | Stock Alerts         | Evening inventory warnings            |
+| Time  | Job                    | Description                           |
+|-------|------------------------|---------------------------------------|
+| 06:00 | OZON Data Sync         | Sync products, inventory, sales       |
+| 09:00 | Daily Report           | Morning sales summary                 |
+| 09:30 | Price Analysis         | Generate price recommendations        |
+| 10:00 | Review Price Experiments | Check completed price A/B tests     |
+| 10:30 | Review Ad Experiments  | Check ad experiments due for review   |
+| 18:00 | Stock Alerts           | Evening inventory warnings            |
 
 ### Price Optimization Workflow
 
@@ -167,16 +186,42 @@ The system runs these jobs automatically:
    - Send results to Telegram
    - Option to rollback if failed
 
+### Advertising Experiments Workflow
+
+1. **Propose** — Ask the AI to run ads:
+   - "Запусти рекламу для крема"
+   - AI proposes campaign settings (which campaign, action, duration)
+
+2. **Confirm** — User approves the experiment:
+   - AI captures baseline metrics (views, clicks, spend, orders)
+   - Executes the action (activate/deactivate/change bid)
+   - Creates experiment record for tracking
+
+3. **Monitor** — Experiment runs for N days:
+   - Baseline period metrics stored
+   - Real-time data available via Performance API
+
+4. **Review** — At review date:
+   - Scheduler sends reminder
+   - Ask AI: "проверить эксперимент {id}"
+   - AI compares: views, clicks, CTR, CPC, orders
+   - Provides recommendation: SUCCESS/FAILED/NEUTRAL
+
+5. **Complete** — User decides:
+   - "завершить эксперимент {id} как SUCCESS"
+   - If FAILED: AI recommends rollback action
+
 ## Database Schema
 
 ### Core Tables
 
-- **products** — Product catalog with pricing
+- **products** — Product catalog with pricing and cost
 - **sales** — Daily sales aggregates
 - **inventory** — Stock snapshots by warehouse
 - **price_history** — All price changes
 - **price_recommendations** — Price optimization suggestions
-- **experiments** — Active A/B price tests
+- **experiments** — A/B price tests
+- **ad_experiments** — Advertising experiments tracking
 - **logs** — System audit trail
 
 See the specification document for detailed schema.
@@ -291,9 +336,17 @@ ozon-bi/
 │   ├── main.py                 # Entry point
 │   ├── config.py               # Configuration
 │   ├── database/               # Database models & repositories
-│   ├── ozon/                   # OZON API client
+│   │   ├── models.py           # SQLAlchemy models
+│   │   └── repositories/       # Data access layer
+│   ├── ozon/                   # OZON API clients
+│   │   ├── client.py           # Seller API client
+│   │   ├── performance.py      # Performance API (ads)
+│   │   └── sync.py             # Data synchronization
 │   ├── bot/                    # Telegram bot
 │   ├── ai/                     # Claude integration
+│   │   ├── assistant.py        # AI assistant with tool calling
+│   │   ├── tools.py            # Tool definitions & execution
+│   │   └── prompts.py          # System prompts
 │   ├── analytics/              # Business analytics
 │   ├── scheduler/              # Automated jobs
 │   └── utils/                  # Utilities

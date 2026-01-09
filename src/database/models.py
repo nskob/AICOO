@@ -156,6 +156,66 @@ class Experiment(Base):
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
 
+class AdExperiment(Base):
+    """Advertising experiments tracking."""
+
+    __tablename__ = "ad_experiments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    campaign_id: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    campaign_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    campaign_type: Mapped[str] = mapped_column(String(50), nullable=False)  # SKU, SEARCH_PROMO, etc.
+    product_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+
+    # Experiment settings
+    action: Mapped[str] = mapped_column(String(50), nullable=False)  # activate, deactivate, change_bid
+    old_bid: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2), nullable=True)
+    new_bid: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2), nullable=True)
+    daily_budget: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2), nullable=True)
+
+    # Timeline
+    start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    review_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    duration_days: Mapped[int] = mapped_column(Integer, default=7)
+
+    # Baseline metrics (before experiment)
+    baseline_views: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    baseline_clicks: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    baseline_spend: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 2), nullable=True)
+    baseline_orders: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    baseline_revenue: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 2), nullable=True)
+
+    # Result metrics (after experiment)
+    result_views: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    result_clicks: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    result_spend: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 2), nullable=True)
+    result_orders: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    result_revenue: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 2), nullable=True)
+
+    # Calculated changes
+    ctr_change_pct: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 2), nullable=True)
+    cpc_change_pct: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 2), nullable=True)
+    roas_before: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 2), nullable=True)  # Return on Ad Spend
+    roas_after: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 2), nullable=True)
+
+    # Status
+    status: Mapped[str] = mapped_column(
+        String(20), default="active", index=True
+    )  # active, reviewing, completed
+    verdict: Mapped[Optional[str]] = mapped_column(
+        String(20), nullable=True
+    )  # SUCCESS, FAILED, NEUTRAL
+    recommendation: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    __table_args__ = (
+        Index("idx_ad_exp_campaign_status", "campaign_id", "status"),
+    )
+
+
 class Log(Base):
     """System logs for auditing and debugging."""
 

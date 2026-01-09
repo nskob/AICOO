@@ -7,6 +7,8 @@ from typing import Any
 
 from src.ozon.client import OzonClient
 from src.ozon.performance import PerformanceClient
+from src.database.engine import AsyncSessionLocal
+from src.database.repositories.ad_experiments import AdExperimentRepository
 
 logger = logging.getLogger(__name__)
 
@@ -149,6 +151,85 @@ TOOLS = [
             },
             "required": ["campaign_id"]
         }
+    },
+    # Ad experiment tools
+    {
+        "name": "start_ad_experiment",
+        "description": "Запустить рекламный эксперимент с отслеживанием результатов. Используй после того как пользователь подтвердил запуск рекламы. Эксперимент будет отслеживаться указанное количество дней.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "campaign_id": {
+                    "type": "string",
+                    "description": "ID рекламной кампании"
+                },
+                "action": {
+                    "type": "string",
+                    "description": "Действие: activate (включить), deactivate (выключить), change_bid (изменить ставку)",
+                    "enum": ["activate", "deactivate", "change_bid"]
+                },
+                "duration_days": {
+                    "type": "integer",
+                    "description": "Количество дней для эксперимента (по умолчанию 7)",
+                    "default": 7
+                },
+                "new_bid": {
+                    "type": "number",
+                    "description": "Новая ставка в рублях (только для action=change_bid)"
+                },
+                "product_id": {
+                    "type": "integer",
+                    "description": "ID товара (если эксперимент для конкретного товара)"
+                }
+            },
+            "required": ["campaign_id", "action"]
+        }
+    },
+    {
+        "name": "get_active_ad_experiments",
+        "description": "Получить список активных рекламных экспериментов. Показывает какие эксперименты сейчас идут и когда их нужно проверить.",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    },
+    {
+        "name": "check_ad_experiment",
+        "description": "Проверить результаты рекламного эксперимента и получить рекомендацию. Используй когда пришло время оценить эксперимент.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "experiment_id": {
+                    "type": "integer",
+                    "description": "ID эксперимента для проверки"
+                }
+            },
+            "required": ["experiment_id"]
+        }
+    },
+    {
+        "name": "complete_ad_experiment",
+        "description": "Завершить эксперимент с вердиктом. Используй после того как пользователь принял решение по результатам эксперимента.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "experiment_id": {
+                    "type": "integer",
+                    "description": "ID эксперимента"
+                },
+                "verdict": {
+                    "type": "string",
+                    "description": "Вердикт: SUCCESS (успешно, оставляем), FAILED (неудачно, откатываем), NEUTRAL (нейтрально)",
+                    "enum": ["SUCCESS", "FAILED", "NEUTRAL"]
+                },
+                "recommendation": {
+                    "type": "string",
+                    "description": "Рекомендация на будущее"
+                }
+            },
+            "required": ["experiment_id", "verdict"]
+        }
     }
 ]
 
@@ -186,6 +267,15 @@ async def execute_tool(tool_name: str, tool_input: dict[str, Any]) -> str:
             return await _set_product_ad_bid(tool_input)
         elif tool_name == "get_campaign_products":
             return await _get_campaign_products(tool_input)
+        # Ad experiment tools
+        elif tool_name == "start_ad_experiment":
+            return await _start_ad_experiment(tool_input)
+        elif tool_name == "get_active_ad_experiments":
+            return await _get_active_ad_experiments()
+        elif tool_name == "check_ad_experiment":
+            return await _check_ad_experiment(tool_input)
+        elif tool_name == "complete_ad_experiment":
+            return await _complete_ad_experiment(tool_input)
         else:
             return f"Неизвестный инструмент: {tool_name}"
     except Exception as e:
@@ -596,3 +686,318 @@ async def _get_campaign_products(params: dict) -> str:
 
     finally:
         await client.close()
+
+
+# ============== AD EXPERIMENT TOOLS ==============
+
+from datetime import timedelta
+
+
+async def _start_ad_experiment(params: dict) -> str:
+    """Start a new advertising experiment."""
+    ok, error = _check_performance_api()
+    if not ok:
+        return error
+
+    campaign_id = params.get("campaign_id")
+    action = params.get("action")
+    duration_days = params.get("duration_days", 7)
+    new_bid = params.get("new_bid")
+    product_id = params.get("product_id")
+
+    if not campaign_id or not action:
+        return "Укажи campaign_id и action"
+
+    client = PerformanceClient()
+    try:
+        # Get campaign info
+        campaigns = await client.get_campaigns()
+        campaign = None
+        for c in campaigns:
+            if str(c.get("id")) == str(campaign_id):
+                campaign = c
+                break
+
+        if not campaign:
+            return f"Кампания {campaign_id} не найдена"
+
+        campaign_name = campaign.get("title", "Без названия")
+        campaign_type = campaign.get("advObjectType", "Unknown")
+
+        # Get baseline metrics (last 7 days)
+        today = date.today()
+        baseline_start = today - timedelta(days=7)
+        baseline_end = today - timedelta(days=1)
+
+        baseline_stats = {"views": 0, "clicks": 0, "spend": 0, "orders": 0, "revenue": 0}
+        try:
+            stats = await client.get_campaign_statistics([campaign_id], baseline_start, baseline_end)
+            rows = stats.get("rows", stats.get("data", []))
+            for row in rows:
+                if isinstance(row, dict):
+                    baseline_stats["views"] += row.get("views", row.get("shows", 0))
+                    baseline_stats["clicks"] += row.get("clicks", 0)
+                    spend = row.get("moneySpent", row.get("spend", 0))
+                    if spend > 1000000:
+                        spend = spend / 100_000_000
+                    baseline_stats["spend"] += spend
+                    baseline_stats["orders"] += row.get("orders", 0)
+        except Exception as e:
+            logger.warning(f"Could not get baseline stats: {e}")
+
+        # Execute the action
+        old_bid = None
+        if action == "activate":
+            await client.activate_campaign(campaign_id)
+        elif action == "deactivate":
+            await client.deactivate_campaign(campaign_id)
+        elif action == "change_bid" and new_bid and product_id:
+            # Get old bid first
+            try:
+                products = await client.get_products_in_campaign(campaign_id)
+                for p in products:
+                    if p.get("productId") == product_id:
+                        old_bid = p.get("bid", 0)
+                        if old_bid > 1000000:
+                            old_bid = old_bid / 100_000_000
+                        break
+            except:
+                pass
+            await client.set_product_bid(campaign_id, product_id, Decimal(str(new_bid)))
+
+        # Create experiment record
+        start_date = today
+        review_date = today + timedelta(days=duration_days)
+
+        async with AsyncSessionLocal() as session:
+            repo = AdExperimentRepository(session)
+            experiment = await repo.create(
+                campaign_id=str(campaign_id),
+                campaign_name=campaign_name,
+                campaign_type=campaign_type,
+                action=action,
+                start_date=start_date,
+                review_date=review_date,
+                duration_days=duration_days,
+                product_id=product_id,
+                old_bid=Decimal(str(old_bid)) if old_bid else None,
+                new_bid=Decimal(str(new_bid)) if new_bid else None,
+                baseline_views=baseline_stats["views"],
+                baseline_clicks=baseline_stats["clicks"],
+                baseline_spend=Decimal(str(baseline_stats["spend"])),
+                baseline_orders=baseline_stats["orders"],
+                baseline_revenue=Decimal(str(baseline_stats.get("revenue", 0))),
+            )
+
+        action_text = {
+            "activate": "ВКЛЮЧЕНА",
+            "deactivate": "ВЫКЛЮЧЕНА",
+            "change_bid": f"изменена ставка на {new_bid}₽"
+        }.get(action, action)
+
+        result = f"🧪 ЭКСПЕРИМЕНТ ЗАПУЩЕН!\n\n"
+        result += f"📢 Кампания: {campaign_name}\n"
+        result += f"🎯 Действие: {action_text}\n"
+        result += f"📅 Период: {duration_days} дней\n"
+        result += f"🔍 Проверка: {review_date.strftime('%d.%m.%Y')}\n"
+        result += f"🆔 ID эксперимента: {experiment.id}\n\n"
+
+        if baseline_stats["clicks"] > 0:
+            result += f"📊 Базовые показатели (7 дней до):\n"
+            result += f"   Показы: {baseline_stats['views']:,}\n"
+            result += f"   Клики: {baseline_stats['clicks']:,}\n"
+            result += f"   Расход: {baseline_stats['spend']:,.2f}₽\n"
+
+        result += f"\nЯ напомню о проверке результатов {review_date.strftime('%d.%m.%Y')}!"
+
+        return result
+
+    finally:
+        await client.close()
+
+
+async def _get_active_ad_experiments() -> str:
+    """Get list of active ad experiments."""
+    async with AsyncSessionLocal() as session:
+        repo = AdExperimentRepository(session)
+        experiments = await repo.get_active_experiments()
+
+        if not experiments:
+            return "🧪 Нет активных рекламных экспериментов"
+
+        result = f"🧪 АКТИВНЫЕ ЭКСПЕРИМЕНТЫ ({len(experiments)} шт):\n\n"
+
+        today = date.today()
+        for exp in experiments:
+            days_left = (exp.review_date - today).days
+            status_emoji = "🟡" if days_left > 0 else "🔴"
+
+            result += f"{status_emoji} **{exp.campaign_name}**\n"
+            result += f"   ID: {exp.id} | Кампания: {exp.campaign_id}\n"
+            result += f"   Действие: {exp.action}\n"
+            result += f"   Начало: {exp.start_date.strftime('%d.%m')}\n"
+
+            if days_left > 0:
+                result += f"   Проверка через: {days_left} дн. ({exp.review_date.strftime('%d.%m')})\n"
+            else:
+                result += f"   ⚠️ ПОРА ПРОВЕРИТЬ! (просрочен на {-days_left} дн.)\n"
+
+            result += "\n"
+
+        return result
+
+
+async def _check_ad_experiment(params: dict) -> str:
+    """Check ad experiment results and get recommendation."""
+    ok, error = _check_performance_api()
+    if not ok:
+        return error
+
+    experiment_id = params.get("experiment_id")
+    if not experiment_id:
+        return "Укажи experiment_id"
+
+    async with AsyncSessionLocal() as session:
+        repo = AdExperimentRepository(session)
+        experiment = await repo.get_by_id(experiment_id)
+
+        if not experiment:
+            return f"Эксперимент {experiment_id} не найден"
+
+        # Get current stats from Performance API
+        client = PerformanceClient()
+        try:
+            stats = await client.get_campaign_statistics(
+                [experiment.campaign_id],
+                experiment.start_date,
+                date.today() - timedelta(days=1)
+            )
+
+            result_stats = {"views": 0, "clicks": 0, "spend": 0, "orders": 0}
+            rows = stats.get("rows", stats.get("data", []))
+            for row in rows:
+                if isinstance(row, dict):
+                    result_stats["views"] += row.get("views", row.get("shows", 0))
+                    result_stats["clicks"] += row.get("clicks", 0)
+                    spend = row.get("moneySpent", row.get("spend", 0))
+                    if spend > 1000000:
+                        spend = spend / 100_000_000
+                    result_stats["spend"] += spend
+                    result_stats["orders"] += row.get("orders", 0)
+
+            # Update experiment with results
+            await repo.update_results(
+                experiment_id=experiment_id,
+                result_views=result_stats["views"],
+                result_clicks=result_stats["clicks"],
+                result_spend=Decimal(str(result_stats["spend"])),
+                result_orders=result_stats["orders"],
+                result_revenue=Decimal("0"),
+            )
+
+            # Refresh experiment data
+            experiment = await repo.get_by_id(experiment_id)
+
+        finally:
+            await client.close()
+
+        # Build report
+        result = f"📊 РЕЗУЛЬТАТЫ ЭКСПЕРИМЕНТА #{experiment_id}\n\n"
+        result += f"📢 Кампания: {experiment.campaign_name}\n"
+        result += f"🎯 Действие: {experiment.action}\n"
+        result += f"📅 Период: {experiment.start_date.strftime('%d.%m')} - {date.today().strftime('%d.%m')}\n\n"
+
+        # Views
+        before_views = experiment.baseline_views or 0
+        after_views = experiment.result_views or 0
+        views_change = ((after_views - before_views) / before_views * 100) if before_views > 0 else 0
+
+        # Clicks
+        before_clicks = experiment.baseline_clicks or 0
+        after_clicks = experiment.result_clicks or 0
+        clicks_change = ((after_clicks - before_clicks) / before_clicks * 100) if before_clicks > 0 else 0
+
+        # Spend
+        before_spend = float(experiment.baseline_spend or 0)
+        after_spend = float(experiment.result_spend or 0)
+        spend_change = ((after_spend - before_spend) / before_spend * 100) if before_spend > 0 else 0
+
+        # Orders
+        before_orders = experiment.baseline_orders or 0
+        after_orders = experiment.result_orders or 0
+        orders_change = ((after_orders - before_orders) / before_orders * 100) if before_orders > 0 else 0
+
+        result += f"📈 СРАВНЕНИЕ (до → после):\n"
+        result += f"   Показы: {before_views:,} → {after_views:,} ({views_change:+.1f}%)\n"
+        result += f"   Клики: {before_clicks:,} → {after_clicks:,} ({clicks_change:+.1f}%)\n"
+        result += f"   Расход: {before_spend:,.0f}₽ → {after_spend:,.0f}₽ ({spend_change:+.1f}%)\n"
+        result += f"   Заказы: {before_orders} → {after_orders} ({orders_change:+.1f}%)\n"
+
+        # CTR & CPC
+        before_ctr = (before_clicks / before_views * 100) if before_views > 0 else 0
+        after_ctr = (after_clicks / after_views * 100) if after_views > 0 else 0
+        before_cpc = before_spend / before_clicks if before_clicks > 0 else 0
+        after_cpc = after_spend / after_clicks if after_clicks > 0 else 0
+
+        result += f"   CTR: {before_ctr:.2f}% → {after_ctr:.2f}%\n"
+        result += f"   CPC: {before_cpc:.2f}₽ → {after_cpc:.2f}₽\n"
+
+        result += f"\n💡 РЕКОМЕНДАЦИЯ:\n"
+
+        # Generate recommendation
+        if after_orders > before_orders and after_cpc <= before_cpc * 1.2:
+            result += "✅ **УСПЕХ** — заказы выросли. Рекомендую оставить.\n"
+            suggested_verdict = "SUCCESS"
+        elif after_orders < before_orders * 0.8:
+            result += "❌ **НЕУДАЧА** — заказы упали. Рекомендую откатить.\n"
+            suggested_verdict = "FAILED"
+        elif after_cpc > before_cpc * 1.5 and after_orders <= before_orders:
+            result += "⚠️ **НЕЭФФЕКТИВНО** — CPC вырос без роста заказов.\n"
+            suggested_verdict = "FAILED"
+        else:
+            result += "🤷 **НЕЙТРАЛЬНО** — значимых изменений нет.\n"
+            suggested_verdict = "NEUTRAL"
+
+        result += f"\nЗавершить? Скажи: завершить эксперимент {experiment_id} как {suggested_verdict}"
+
+        return result
+
+
+async def _complete_ad_experiment(params: dict) -> str:
+    """Complete an ad experiment with a verdict."""
+    experiment_id = params.get("experiment_id")
+    verdict = params.get("verdict")
+    recommendation = params.get("recommendation")
+
+    if not experiment_id or not verdict:
+        return "Укажи experiment_id и verdict"
+
+    if verdict not in ["SUCCESS", "FAILED", "NEUTRAL"]:
+        return "verdict должен быть SUCCESS, FAILED или NEUTRAL"
+
+    async with AsyncSessionLocal() as session:
+        repo = AdExperimentRepository(session)
+        experiment = await repo.complete_experiment(
+            experiment_id=experiment_id,
+            verdict=verdict,
+            recommendation=recommendation
+        )
+
+        if not experiment:
+            return f"Эксперимент {experiment_id} не найден"
+
+        verdict_emoji = {"SUCCESS": "✅", "FAILED": "❌", "NEUTRAL": "🤷"}.get(verdict, "")
+
+        result = f"{verdict_emoji} Эксперимент #{experiment_id} завершён!\n\n"
+        result += f"📢 Кампания: {experiment.campaign_name}\n"
+        result += f"🎯 Вердикт: **{verdict}**\n"
+
+        if recommendation:
+            result += f"📝 Заметка: {recommendation}\n"
+
+        if verdict == "FAILED" and experiment.action == "activate":
+            result += f"\n⚠️ Рекомендую выключить кампанию {experiment.campaign_id}"
+        elif verdict == "FAILED" and experiment.action == "change_bid" and experiment.old_bid:
+            result += f"\n⚠️ Рекомендую вернуть ставку на {experiment.old_bid}₽"
+
+        return result
