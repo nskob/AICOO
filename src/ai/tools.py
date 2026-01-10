@@ -1001,3 +1001,32 @@ async def _complete_ad_experiment(params: dict) -> str:
             result += f"\n⚠️ Рекомендую вернуть ставку на {experiment.old_bid}₽"
 
         return result
+
+
+# ============== OPENAI TOOLS FORMAT ==============
+
+def _convert_to_openai_format(tools: list[dict]) -> list[dict]:
+    """Convert Anthropic tool format to OpenAI function calling format.
+
+    Anthropic format:
+        {"name": ..., "description": ..., "input_schema": {...}}
+
+    OpenAI format:
+        {"type": "function", "function": {"name": ..., "description": ..., "parameters": {...}}}
+    """
+    openai_tools = []
+    for tool in tools:
+        openai_tool = {
+            "type": "function",
+            "function": {
+                "name": tool["name"],
+                "description": tool["description"],
+                "parameters": tool["input_schema"],
+            },
+        }
+        openai_tools.append(openai_tool)
+    return openai_tools
+
+
+# OpenAI-formatted tools for use with GPT models
+TOOLS_OPENAI = _convert_to_openai_format(TOOLS)

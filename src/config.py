@@ -21,8 +21,8 @@ class Settings(BaseSettings):
     ozon_performance_client_id: str | None = None
     ozon_performance_api_key: str | None = None
 
-    # Claude API
-    anthropic_api_key: str
+    # OpenAI API
+    openai_api_key: str
 
     # Application settings
     timezone: str = "Europe/Moscow"

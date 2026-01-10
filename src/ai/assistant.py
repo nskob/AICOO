@@ -1,30 +1,31 @@
-"""Claude AI assistant integration."""
+"""OpenAI GPT assistant integration."""
 
+import json
 import logging
 from typing import Optional
 
-from anthropic import AsyncAnthropic
+from openai import AsyncOpenAI
 
 from src.config import settings
 from src.ai.prompts import build_system_prompt, BusinessContext
-from src.ai.tools import TOOLS, execute_tool
+from src.ai.tools import TOOLS_OPENAI, execute_tool
 
 logger = logging.getLogger(__name__)
 
 
-class ClaudeAssistant:
-    """AI assistant powered by Claude with tool calling support."""
+class OpenAIAssistant:
+    """AI assistant powered by OpenAI GPT with tool calling support."""
 
     def __init__(self, api_key: Optional[str] = None):
-        """Initialize Claude client."""
-        self.client = AsyncAnthropic(api_key=api_key or settings.anthropic_api_key)
-        self.model = "claude-sonnet-4-20250514"
+        """Initialize OpenAI client."""
+        self.client = AsyncOpenAI(api_key=api_key or settings.openai_api_key)
+        self.model = "gpt-4o"
         self.max_tool_iterations = 5  # Prevent infinite loops
 
     async def ask(
         self, user_message: str, business_context: BusinessContext, max_tokens: int = 2000
     ) -> str:
-        """Ask Claude a question with business context and tool support.
+        """Ask GPT a question with business context and tool support.
 
         Args:
             user_message: The user's question
@@ -32,75 +33,76 @@ class ClaudeAssistant:
             max_tokens: Maximum tokens in response
 
         Returns:
-            Claude's response text
+            GPT's response text
         """
         try:
             system_prompt = build_system_prompt(business_context)
 
-            messages = [{"role": "user", "content": user_message}]
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message},
+            ]
 
             # Iterate until we get a final response (not a tool call)
             for iteration in range(self.max_tool_iterations):
-                response = await self.client.messages.create(
+                response = await self.client.chat.completions.create(
                     model=self.model,
                     max_tokens=max_tokens,
-                    system=system_prompt,
                     messages=messages,
-                    tools=TOOLS,
+                    tools=TOOLS_OPENAI,
+                    tool_choice="auto",
                 )
 
-                logger.info(f"Claude response stop_reason: {response.stop_reason}")
+                choice = response.choices[0]
+                message = choice.message
 
-                # Check if Claude wants to use a tool
-                if response.stop_reason == "tool_use":
-                    # Find tool use blocks and execute them
-                    tool_results = []
-                    assistant_content = []
+                logger.info(f"OpenAI response finish_reason: {choice.finish_reason}")
 
-                    for block in response.content:
-                        if block.type == "tool_use":
-                            logger.info(f"Tool call: {block.name} with {block.input}")
-
-                            # Execute the tool
-                            result = await execute_tool(block.name, block.input)
-
-                            tool_results.append({
-                                "type": "tool_result",
-                                "tool_use_id": block.id,
-                                "content": result,
-                            })
-                            assistant_content.append(block)
-                        elif block.type == "text":
-                            assistant_content.append(block)
-
-                    # Add assistant's response with tool calls
+                # Check if GPT wants to use tools
+                if choice.finish_reason == "tool_calls" and message.tool_calls:
+                    # Add assistant message with tool calls
                     messages.append({
                         "role": "assistant",
-                        "content": [
-                            {"type": b.type, "id": b.id, "name": b.name, "input": b.input}
-                            if b.type == "tool_use"
-                            else {"type": "text", "text": b.text}
-                            for b in assistant_content
+                        "content": message.content,
+                        "tool_calls": [
+                            {
+                                "id": tc.id,
+                                "type": "function",
+                                "function": {
+                                    "name": tc.function.name,
+                                    "arguments": tc.function.arguments,
+                                },
+                            }
+                            for tc in message.tool_calls
                         ],
                     })
 
-                    # Add tool results
-                    messages.append({
-                        "role": "user",
-                        "content": tool_results,
-                    })
+                    # Execute each tool and add results
+                    for tool_call in message.tool_calls:
+                        tool_name = tool_call.function.name
+                        try:
+                            tool_input = json.loads(tool_call.function.arguments)
+                        except json.JSONDecodeError:
+                            tool_input = {}
 
-                    logger.info(f"Executed {len(tool_results)} tool(s), continuing...")
+                        logger.info(f"Tool call: {tool_name} with {tool_input}")
+
+                        # Execute the tool
+                        result = await execute_tool(tool_name, tool_input)
+
+                        # Add tool result
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "content": result,
+                        })
+
+                    logger.info(f"Executed {len(message.tool_calls)} tool(s), continuing...")
 
                 else:
-                    # Final response - extract text
-                    text_parts = []
-                    for block in response.content:
-                        if hasattr(block, "text"):
-                            text_parts.append(block.text)
-
-                    if text_parts:
-                        return "\n".join(text_parts)
+                    # Final response - return text
+                    if message.content:
+                        return message.content
                     else:
                         return "Извините, не удалось получить ответ."
 
@@ -109,9 +111,13 @@ class ClaudeAssistant:
             return "Извините, обработка заняла слишком много времени. Попробуйте упростить вопрос."
 
         except Exception as e:
-            logger.error(f"Claude API error: {e}")
+            logger.error(f"OpenAI API error: {e}")
             return f"Ошибка при обращении к AI: {str(e)}"
 
     async def close(self) -> None:
         """Close the client (cleanup)."""
         await self.client.close()
+
+
+# Alias for backward compatibility
+ClaudeAssistant = OpenAIAssistant
