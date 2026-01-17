@@ -7,7 +7,7 @@ from decimal import Decimal
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from src.ai.assistant import ClaudeAssistant
+from src.ai.assistant import OpenAIAssistant
 from src.ai.prompts import (
     BusinessContext,
     build_experiments_summary,
@@ -92,8 +92,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             # Build business context
             business_context = await build_business_context_data(session)
 
-            # Ask Claude
-            assistant = ClaudeAssistant()
+            # Ask AI
+            assistant = OpenAIAssistant()
             response = await assistant.ask(user_message, business_context)
             await assistant.close()
 

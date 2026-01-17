@@ -216,6 +216,58 @@ class AdExperiment(Base):
     )
 
 
+class ContentExperiment(Base):
+    """Content A/B testing experiments (name, description changes)."""
+
+    __tablename__ = "content_experiments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    product_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    offer_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    product_name: Mapped[str] = mapped_column(String(500), nullable=False)
+
+    # What we're changing
+    field_type: Mapped[str] = mapped_column(String(50), nullable=False)  # name, description
+    old_value: Mapped[str] = mapped_column(Text, nullable=False)
+    new_value: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # Timeline
+    start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    review_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    duration_days: Mapped[int] = mapped_column(Integer, default=7)
+
+    # Baseline metrics (before experiment)
+    baseline_views: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    baseline_add_to_cart: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    baseline_orders: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    baseline_revenue: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 2), nullable=True)
+    baseline_conversion: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 2), nullable=True)
+
+    # Result metrics (after experiment)
+    result_views: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    result_add_to_cart: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    result_orders: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    result_revenue: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 2), nullable=True)
+    result_conversion: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 2), nullable=True)
+
+    # Status
+    status: Mapped[str] = mapped_column(
+        String(20), default="active", index=True
+    )  # active, reviewing, completed, rolled_back
+    verdict: Mapped[Optional[str]] = mapped_column(
+        String(20), nullable=True
+    )  # SUCCESS, FAILED, NEUTRAL
+    recommendation: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    __table_args__ = (
+        Index("idx_content_exp_product_status", "product_id", "status"),
+    )
+
+
 class Log(Base):
     """System logs for auditing and debugging."""
 

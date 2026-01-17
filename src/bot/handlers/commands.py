@@ -7,7 +7,7 @@ from decimal import Decimal
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from src.ai.assistant import ClaudeAssistant
+from src.ai.assistant import OpenAIAssistant
 from src.ai.prompts import (
     BusinessContext,
     build_experiments_summary,

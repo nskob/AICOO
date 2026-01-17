@@ -6,7 +6,7 @@ A comprehensive business intelligence and automated pricing system for OZON mark
 
 - **📊 Sales Monitoring** — Daily reports with trends and anomaly detection
 - **📦 Inventory Management** — Stock forecasting, reorder alerts, supply planning
-- **🤖 AI Assistant** — Telegram chatbot powered by Claude that knows all business data
+- **🤖 AI Assistant** — Telegram chatbot powered by OpenAI GPT-4 that knows all business data
 - **💰 Price Optimization** — Automated price recommendations with A/B experiments
 - **📢 Advertising Management** — Control ad campaigns via Performance API with experiment tracking
 
@@ -15,7 +15,7 @@ A comprehensive business intelligence and automated pricing system for OZON mark
 - **Python 3.11+** — Core language
 - **PostgreSQL** — Database for analytics
 - **Telegram Bot API** — User interface
-- **Claude API (Anthropic)** — AI assistant with tool calling
+- **OpenAI API** — AI assistant with tool calling (GPT-4o)
 - **OZON Seller API** — Products, sales, inventory data
 - **OZON Performance API** — Advertising campaigns management
 - **SQLAlchemy 2.0** — Async ORM
@@ -29,7 +29,7 @@ A comprehensive business intelligence and automated pricing system for OZON mark
 - PostgreSQL 14 or higher
 - OZON Seller API credentials
 - Telegram Bot Token
-- Claude API key (Anthropic)
+- OpenAI API key
 
 ### Setup Steps
 
@@ -90,8 +90,8 @@ OZON_API_KEY=your_api_key
 OZON_PERFORMANCE_CLIENT_ID=your_performance_client_id
 OZON_PERFORMANCE_API_KEY=your_performance_secret
 
-# Claude API
-ANTHROPIC_API_KEY=sk-ant-your_key_here
+# OpenAI API
+OPENAI_API_KEY=sk-proj-your_key_here
 
 # Optional
 TIMEZONE=Europe/Moscow
@@ -119,10 +119,10 @@ LOG_LEVEL=INFO
 4. Generate Client Secret
 5. Uses OAuth2 authentication (handled automatically)
 
-**Claude API:**
-1. Sign up at [console.anthropic.com](https://console.anthropic.com)
+**OpenAI API:**
+1. Sign up at [platform.openai.com](https://platform.openai.com)
 2. Create an API key
-3. Copy the key starting with `sk-ant-`
+3. Copy the key starting with `sk-proj-`
 
 ## Usage
 
@@ -343,7 +343,7 @@ ozon-bi/
 │   │   ├── performance.py      # Performance API (ads)
 │   │   └── sync.py             # Data synchronization
 │   ├── bot/                    # Telegram bot
-│   ├── ai/                     # Claude integration
+│   ├── ai/                     # OpenAI integration
 │   │   ├── assistant.py        # AI assistant with tool calling
 │   │   ├── tools.py            # Tool definitions & execution
 │   │   └── prompts.py          # System prompts

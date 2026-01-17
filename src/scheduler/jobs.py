@@ -14,6 +14,7 @@ from src.bot.keyboards import get_price_recommendation_keyboard
 from src.config import settings
 from src.database.engine import AsyncSessionLocal
 from src.database.repositories.ad_experiments import AdExperimentRepository
+from src.database.repositories.content_experiments import ContentExperimentRepository
 from src.database.repositories.experiments import ExperimentRepository
 from src.database.repositories.price_recommendations import PriceRecommendationRepository
 from src.database.repositories.products import ProductRepository
@@ -348,6 +349,45 @@ async def review_ad_experiments(app: Application) -> None:
             logger.error(f"Ad experiment review failed: {e}")
 
 
+async def review_content_experiments(app: Application) -> None:
+    """Review content experiments that are due for review."""
+    logger.info("Reviewing content experiments")
+
+    async with AsyncSessionLocal() as session:
+        try:
+            content_exp_repo = ContentExperimentRepository(session)
+            today = date.today()
+            experiments = await content_exp_repo.get_experiments_for_review(today)
+
+            if not experiments:
+                logger.info("No content experiments due for review")
+                return
+
+            for exp in experiments:
+                field_name = "Название" if exp.field_type == "name" else "Описание"
+                message = f"""🧪 *Время проверить контент-эксперимент!*
+
+📦 *Товар:* {truncate_text(exp.product_name, 40)}
+✏️ *Изменение:* {field_name}
+📅 *Начало:* {format_date(exp.start_date)}
+⏰ *Длительность:* {exp.duration_days} дней
+
+📊 *Базовые показатели:*
+• Просмотры: {format_number(exp.baseline_views or 0)}
+• В корзину: {format_number(exp.baseline_add_to_cart or 0)}
+• Заказы: {format_number(exp.baseline_orders or 0)}
+• Выручка: {format_currency(exp.baseline_revenue or Decimal('0'))}
+
+Напиши "проверить контент-эксперимент {exp.id}" чтобы увидеть результаты.
+"""
+                await send_telegram_message(app, message)
+
+            logger.info(f"Sent {len(experiments)} content experiment review reminders")
+
+        except Exception as e:
+            logger.error(f"Content experiment review failed: {e}")
+
+
 async def send_stock_alerts(app: Application) -> None:
     """Send evening inventory status alerts."""
     logger.info("Generating stock alerts")
@@ -396,6 +436,7 @@ def setup_scheduler(app: Application) -> AsyncIOScheduler:
     - 09:30: Run price analysis
     - 10:00: Review price experiments
     - 10:30: Review ad experiments
+    - 11:00: Review content experiments
     - 18:00: Send stock alerts
     """
     scheduler = AsyncIOScheduler(timezone=settings.timezone)
@@ -447,6 +488,15 @@ def setup_scheduler(app: Application) -> AsyncIOScheduler:
     )
 
     scheduler.add_job(
+        review_content_experiments,
+        "cron",
+        hour=11,
+        minute=0,
+        kwargs={"app": app},
+        id="review_content_experiments",
+    )
+
+    scheduler.add_job(
         send_stock_alerts,
         "cron",
         hour=18,
@@ -455,6 +505,6 @@ def setup_scheduler(app: Application) -> AsyncIOScheduler:
         id="send_stock_alerts",
     )
 
-    logger.info("Scheduler configured with 6 jobs")
+    logger.info("Scheduler configured with 7 jobs")
 
     return scheduler

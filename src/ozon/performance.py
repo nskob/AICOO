@@ -122,12 +122,12 @@ class PerformanceClient:
         Returns:
             Campaign object or None
         """
-        url = f"{self.BASE_URL}/api/client/campaign/{campaign_id}"
-
+        # OZON API doesn't support GET for single campaign, so we filter from list
         try:
-            response = await self.client.get(url, headers=await self._get_headers())
-            response.raise_for_status()
-            return response.json()
+            campaigns = await self.get_campaigns(campaign_ids=[str(campaign_id)])
+            if campaigns:
+                return campaigns[0]
+            return None
         except Exception as e:
             logger.error(f"Failed to fetch campaign {campaign_id}: {e}")
             raise
@@ -262,17 +262,34 @@ class PerformanceClient:
         Returns:
             List of products with their bids
         """
-        url = f"{self.BASE_URL}/api/client/campaign/{campaign_id}/products"
+        # First, get campaign type to determine correct endpoint
+        campaign = await self.get_campaign(campaign_id)
+        campaign_type = campaign.get("advObjectType", "SKU") if campaign else "SKU"
+
+        if campaign_type == "SKU":
+            # SKU campaigns use /objects endpoint
+            url = f"{self.BASE_URL}/api/client/campaign/{campaign_id}/objects"
+        elif campaign_type == "SEARCH_PROMO":
+            # Search promotion campaigns don't have individual product listings
+            # They promote all products or by category
+            logger.info(f"SEARCH_PROMO campaign {campaign_id} - products managed by category/all")
+            return [{"type": "SEARCH_PROMO", "note": "Кампания продвигает все товары или категорию"}]
+        elif campaign_type in ("BRAND_SHELF", "BANNER", "SIS"):
+            # These campaign types don't have product listings
+            logger.info(f"{campaign_type} campaign {campaign_id} - no individual products")
+            return [{"type": campaign_type, "note": f"Кампания типа {campaign_type} не содержит отдельных товаров"}]
+        else:
+            url = f"{self.BASE_URL}/api/client/campaign/{campaign_id}/objects"
 
         try:
             response = await self.client.get(url, headers=await self._get_headers())
             response.raise_for_status()
             data = response.json()
-            products = data.get("products", [])
-            logger.info(f"Fetched {len(products)} products from campaign {campaign_id}")
+            products = data.get("list", [])
+            logger.info(f"Fetched {len(products)} products from {campaign_type} campaign {campaign_id}")
             return products
         except Exception as e:
-            logger.error(f"Failed to fetch products for campaign {campaign_id}: {e}")
+            logger.error(f"Failed to fetch products for campaign {campaign_id} (type={campaign_type}): {e}")
             raise
 
     async def set_product_bid(
@@ -291,21 +308,45 @@ class PerformanceClient:
         Returns:
             True if successful
         """
-        url = f"{self.BASE_URL}/api/client/campaign/{campaign_id}/products/bids"
+        # Get campaign type to determine correct endpoint
+        campaign = await self.get_campaign(campaign_id)
+        campaign_type = campaign.get("advObjectType", "SKU") if campaign else "SKU"
 
-        payload = {
-            "bids": [
-                {
-                    "productId": product_id,
-                    "bid": int(bid * 100_000_000),  # Convert to nanocurrency
-                }
-            ]
-        }
+        if campaign_type == "SKU":
+            url = f"{self.BASE_URL}/api/client/campaign/{campaign_id}/objects/bids"
+            payload = {
+                "bids": [
+                    {
+                        "id": product_id,
+                        "bid": int(bid * 100_000_000),  # Convert to nanocurrency
+                    }
+                ]
+            }
+        elif campaign_type == "SEARCH_PROMO":
+            url = f"{self.BASE_URL}/api/client/campaign/{campaign_id}/search_promo/bids"
+            payload = {
+                "bids": [
+                    {
+                        "sku": product_id,
+                        "bid": int(bid * 100_000_000),
+                    }
+                ]
+            }
+        else:
+            url = f"{self.BASE_URL}/api/client/campaign/{campaign_id}/objects/bids"
+            payload = {
+                "bids": [
+                    {
+                        "id": product_id,
+                        "bid": int(bid * 100_000_000),
+                    }
+                ]
+            }
 
         try:
             response = await self.client.post(url, json=payload, headers=await self._get_headers())
             response.raise_for_status()
-            logger.info(f"Set bid {bid} for product {product_id} in campaign {campaign_id}")
+            logger.info(f"Set bid {bid} for product {product_id} in {campaign_type} campaign {campaign_id}")
             return True
         except Exception as e:
             logger.error(f"Failed to set bid: {e}")

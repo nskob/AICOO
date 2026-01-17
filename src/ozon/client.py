@@ -211,3 +211,211 @@ class OzonClient:
         except Exception as e:
             logger.error(f"Failed to update price for product {product_id}: {e}")
             return False
+
+    async def get_product_attributes(self, product_id: int) -> dict[str, Any]:
+        """Get product attributes including name and description.
+
+        Args:
+            product_id: OZON product ID
+
+        Returns:
+            Product attributes dict
+        """
+        url = f"{self.BASE_URL}/v4/product/info/attributes"
+        payload = {
+            "filter": {"product_id": [product_id]},
+            "limit": 1
+        }
+
+        try:
+            response = await self.client.post(url, json=payload, headers=self._get_headers())
+            response.raise_for_status()
+            data = response.json()
+            items = data.get("result", [])
+            if items:
+                return items[0]
+            return {}
+        except Exception as e:
+            logger.error(f"Failed to get product attributes for {product_id}: {e}")
+            raise
+
+    async def update_product_content(
+        self,
+        offer_id: str,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+    ) -> bool:
+        """Update product name and/or description.
+
+        Uses /v3/product/import-by-sku endpoint.
+
+        Args:
+            offer_id: Seller's SKU (offer_id)
+            name: New product name (optional)
+            description: New product description (optional)
+
+        Returns:
+            True if update was accepted
+        """
+        if not name and not description:
+            logger.warning("No changes provided for content update")
+            return False
+
+        url = f"{self.BASE_URL}/v3/product/import-by-sku"
+
+        # Build item with only the fields we want to update
+        item = {"offer_id": offer_id}
+        if name:
+            item["name"] = name
+        if description:
+            # Description is attribute_id 4191 in OZON
+            item["attributes"] = [
+                {
+                    "id": 4191,  # Description attribute
+                    "values": [{"value": description}]
+                }
+            ]
+
+        payload = {"items": [item]}
+
+        try:
+            response = await self.client.post(url, json=payload, headers=self._get_headers())
+            response.raise_for_status()
+            data = response.json()
+            result = data.get("result", {})
+
+            # Check for task_id - means update was accepted
+            task_id = result.get("task_id")
+            if task_id:
+                logger.info(f"Content update for {offer_id} accepted, task_id: {task_id}")
+                return True
+
+            # Check for errors
+            errors = result.get("errors", [])
+            if errors:
+                logger.error(f"Content update errors: {errors}")
+                return False
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to update content for {offer_id}: {e}")
+            raise
+
+    async def get_product_rating(self, product_ids: list[int]) -> dict[int, dict]:
+        """Get product ratings and review counts.
+
+        Args:
+            product_ids: List of OZON product IDs
+
+        Returns:
+            Dict mapping product_id to rating info
+        """
+        url = f"{self.BASE_URL}/v1/product/rating-by-sku"
+        payload = {"skus": product_ids}
+
+        try:
+            response = await self.client.post(url, json=payload, headers=self._get_headers())
+            response.raise_for_status()
+            data = response.json()
+
+            result = {}
+            for item in data.get("products", []):
+                sku = item.get("sku")
+                if sku:
+                    result[sku] = {
+                        "rating": item.get("rating", 0),
+                        "reviews_count": item.get("reviews_count", 0),
+                        "questions_count": item.get("questions_count", 0),
+                    }
+            return result
+
+        except Exception as e:
+            logger.warning(f"Failed to get product ratings: {e}")
+            return {}
+
+    async def get_reviews_list(
+        self, product_id: int, limit: int = 10
+    ) -> list[dict[str, Any]]:
+        """Get list of reviews for a product.
+
+        Note: Requires Premium Plus subscription.
+
+        Args:
+            product_id: OZON product ID
+            limit: Max reviews to fetch
+
+        Returns:
+            List of review objects
+        """
+        url = f"{self.BASE_URL}/v1/review/list"
+        payload = {
+            "filter": {"product_id": [product_id]},
+            "sort": {"sort_by": "PUBLISHED_AT", "sort_direction": "DESC"},
+            "limit": limit,
+        }
+
+        try:
+            response = await self.client.post(url, json=payload, headers=self._get_headers())
+            response.raise_for_status()
+            data = response.json()
+            return data.get("reviews", [])
+
+        except Exception as e:
+            logger.warning(f"Failed to get reviews (may require Premium): {e}")
+            return []
+
+    async def get_questions_list(
+        self, product_id: int, limit: int = 10
+    ) -> list[dict[str, Any]]:
+        """Get list of customer questions for a product.
+
+        Args:
+            product_id: OZON product ID
+            limit: Max questions to fetch
+
+        Returns:
+            List of question objects
+        """
+        url = f"{self.BASE_URL}/v1/product/question/list"
+        payload = {
+            "filter": {"product_id": product_id, "status": "NEW"},
+            "limit": limit,
+        }
+
+        try:
+            response = await self.client.post(url, json=payload, headers=self._get_headers())
+            response.raise_for_status()
+            data = response.json()
+            return data.get("questions", [])
+
+        except Exception as e:
+            logger.warning(f"Failed to get questions: {e}")
+            return []
+
+    async def get_product_content_analytics(
+        self, sku: int, date_from: date, date_to: date
+    ) -> dict[str, Any]:
+        """Get content-related analytics for a product.
+
+        NOTE: View metrics (hits_view_pdp, hits_view_search, hits_tocart) are
+        DEPRECATED by OZON API as of 2024. Only ordered_units and revenue work.
+
+        Args:
+            sku: OZON SKU (not product_id! Get it from product info)
+            date_from: Start date
+            date_to: End date
+
+        Returns:
+            Analytics data dict (views will be 0 - data not available)
+        """
+        # Views metrics are deprecated by OZON - return zeros
+        # Only ordered_units and revenue work now, but we already get
+        # those from local database sync
+        return {
+            "views_search": 0,
+            "views_pdp": 0,
+            "add_to_cart": 0,
+            "cart_conversion": 0,
+            "views_unavailable": True,  # Flag to show appropriate message
+        }
